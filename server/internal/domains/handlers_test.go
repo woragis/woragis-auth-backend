@@ -11,6 +11,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+
+	"woragis-auth-service/pkg/auth"
 )
 
 func TestHandler_Register_Success(t *testing.T) {
@@ -279,5 +281,13 @@ func (m *MockService) listUsers(page, limit int, search string) ([]User, int64, 
 func (m *MockService) cleanupExpiredSessions() error {
 	args := m.Called()
 	return args.Error(0)
+}
+
+func (m *MockService) validateToken(token string) (*auth.Claims, error) {
+	args := m.Called(token)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*auth.Claims), args.Error(1)
 }
 
