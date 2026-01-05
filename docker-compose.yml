@@ -12,7 +12,7 @@ services:
       timeout: 5s
       retries: 5
     ports:
-      - "${POSTGRES_PORT:-5433}:5432"
+      - "${POSTGRES_PORT:-5442}:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
     restart: unless-stopped
@@ -28,7 +28,7 @@ services:
       timeout: 5s
       retries: 5
     ports:
-      - "${REDIS_PORT:-6381}:6379"
+      - "${REDIS_PORT:-6389}:6379"
     volumes:
       - redis-data:/data
     restart: unless-stopped
@@ -83,7 +83,7 @@ services:
       CREATIVE_SERVICE_URL: ${CREATIVE_SERVICE_URL:-http://creative-service:8000}
       EMAIL_WORKER_URL: ${EMAIL_WORKER_URL:-http://email-worker:8080}
     ports:
-      - "${APP_PORT:-3001}:3000"
+      - "${APP_PORT:-3010}:3000"
     restart: on-failure
     networks:
       - auth-service-network
@@ -105,7 +105,7 @@ services:
     depends_on:
       - app
     ports:
-      - "${PROMETHEUS_PORT:-9091}:9090"
+      - "${PROMETHEUS_PORT:-9100}:9090"
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:9090/-/healthy || exit 1"]
@@ -119,7 +119,7 @@ services:
     image: grafana/loki:2.9.2
     container_name: auth-service-loki
     ports:
-      - "${LOKI_PORT:-3101}:3100"
+      - "${LOKI_PORT:-3110}:3100"
     volumes:
       - ./monitoring/loki-config.yml:/etc/loki/local-config.yaml:ro
       - loki-data:/loki
@@ -159,15 +159,15 @@ services:
       COLLECTOR_OTLP_ENABLED: "true"
       COLLECTOR_ZIPKIN_HOST_PORT: ":9411"
     ports:
-      - "${JAEGER_UI_PORT:-16687}:16686"  # Jaeger UI
-      - "${JAEGER_OTLP_GRPC_PORT:-4319}:4317"    # OTLP gRPC
-      - "${JAEGER_OTLP_HTTP_PORT:-4320}:4318"    # OTLP HTTP
-      - "${JAEGER_AGENT_UDP_6831:-6831}:6831/udp"  # Jaeger agent (UDP)
-      - "${JAEGER_AGENT_UDP_6832:-6832}:6832/udp"  # Jaeger agent (UDP)
-      - "${JAEGER_CONFIG_PORT:-5778}:5778"    # Config server
-      - "${JAEGER_GRPC_PORT:-14250}:14250"  # Jaeger gRPC
-      - "${JAEGER_HTTP_PORT:-14268}:14268"  # Jaeger HTTP
-      - "${ZIPKIN_PORT:-9411}:9411"    # Zipkin
+      - "${JAEGER_UI_PORT:-16696}:16686"  # Jaeger UI
+      - "${JAEGER_OTLP_GRPC_PORT:-4327}:4317"    # OTLP gRPC
+      - "${JAEGER_OTLP_HTTP_PORT:-4328}:4318"    # OTLP HTTP
+      - "${JAEGER_AGENT_UDP_6831:-6841}:6831/udp"  # Jaeger agent (UDP)
+      - "${JAEGER_AGENT_UDP_6832:-6842}:6832/udp"  # Jaeger agent (UDP)
+      - "${JAEGER_CONFIG_PORT:-5788}:5778"    # Config server
+      - "${JAEGER_GRPC_PORT:-14260}:14250"  # Jaeger gRPC
+      - "${JAEGER_HTTP_PORT:-14278}:14268"  # Jaeger HTTP
+      - "${ZIPKIN_PORT:-9421}:9411"    # Zipkin
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:16686/ || exit 1"]
@@ -194,7 +194,7 @@ services:
       GF_INSTALL_PLUGINS: grafana-piechart-panel
       GF_SERVER_ROOT_URL: ${GRAFANA_ROOT_URL:-http://localhost:3000}
     ports:
-      - "${GRAFANA_PORT:-3011}:3000"
+      - "${GRAFANA_PORT:-3020}:3000"
     volumes:
       - grafana-data:/var/lib/grafana
       - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
