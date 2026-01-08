@@ -157,8 +157,8 @@ func (s *serviceImpl) register(req *RegisterRequest) (*AuthResponse, error) {
 		return nil, fmt.Errorf("failed to create profile: %w", err)
 	}
 
-	// Generate tokens
-	accessToken, refreshToken, err := s.jwtManager.Generate(user.ID, user.Email, user.Role, user.Username)
+	// Generate tokens with full name
+	accessToken, refreshToken, err := s.jwtManager.Generate(user.ID, user.Email, user.Role, user.GetFullName())
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate tokens: %w", err)
 	}
@@ -232,8 +232,8 @@ func (s *serviceImpl) login(req *LoginRequest, userAgent, ipAddress string) (*Au
 		return nil, ErrInvalidCredentials
 	}
 
-	// Generate tokens
-	accessToken, refreshToken, err := s.jwtManager.Generate(user.ID, user.Email, user.Role, user.Username)
+	// Generate tokens with full name
+	accessToken, refreshToken, err := s.jwtManager.Generate(user.ID, user.Email, user.Role, user.GetFullName())
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate tokens: %w", err)
 	}

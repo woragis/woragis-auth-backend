@@ -1,49 +1,49 @@
 services:
-  database:
+  woragis-auth-database:
     image: postgres:15-alpine
-    container_name: auth-service-database
+    container_name: woragis-auth-database
     environment:
       POSTGRES_DB: auth_service
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
       POSTGRES_USER: ${POSTGRES_USER:-woragis}
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-woragis}"]
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-woragis}']
       interval: 10s
       timeout: 5s
       retries: 5
     ports:
-      - "${POSTGRES_PORT:-5442}:5432"
+      - '${POSTGRES_PORT:-5442}:5432'
     volumes:
       - postgres-data:/var/lib/postgresql/data
     restart: unless-stopped
     networks:
       - auth-service-network
 
-  redis:
+  woragis-auth-redis:
     image: redis:7-alpine
-    container_name: auth-service-redis
+    container_name: woragis-auth-redis
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ['CMD', 'redis-cli', 'ping']
       interval: 10s
       timeout: 5s
       retries: 5
     ports:
-      - "${REDIS_PORT:-6389}:6379"
+      - '${REDIS_PORT:-6389}:6379'
     volumes:
       - redis-data:/data
     restart: unless-stopped
     networks:
       - auth-service-network
 
-  app:
+  woragis-auth-app:
     build:
       context: ./server
       dockerfile: Dockerfile
-    container_name: auth-service-app
+    container_name: woragis-auth-app
     depends_on:
-      database:
+      woragis-auth-database:
         condition: service_healthy
-      redis:
+      woragis-auth-redis:
         condition: service_healthy
     environment:
       APP_ENV: ${APP_ENV:-development}
@@ -54,8 +54,8 @@ services:
       AUTH_JWT_TTL: ${AUTH_JWT_TTL:-24h}
       AES_KEY: ${AES_KEY:-}
       HASH_SALT: ${HASH_SALT:-}
-      DATABASE_URL: postgres://${POSTGRES_USER:-woragis}:${POSTGRES_PASSWORD:-password}@database:5432/${POSTGRES_DB:-auth_service}?sslmode=disable
-      REDIS_URL: redis://redis:6379/0
+      DATABASE_URL: postgres://${POSTGRES_USER:-woragis}:${POSTGRES_PASSWORD:-password}@woragis-auth-database:5432/${POSTGRES_DB:-auth_service}?sslmode=disable
+      REDIS_URL: redis://woragis-auth-redis:6379/0
       RABBITMQ_URL: amqp://${RABBITMQ_USER:-woragis}:${RABBITMQ_PASSWORD:-woragis}@rabbitmq:5672/${RABBITMQ_VHOST:-/}
       RABBITMQ_USER: ${RABBITMQ_USER:-woragis}
       RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-woragis}
@@ -76,69 +76,82 @@ services:
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174,http://localhost:4173,http://127.0.0.1:4173}
       CORS_ALLOWED_METHODS: ${CORS_ALLOWED_METHODS:-GET,POST,PUT,PATCH,DELETE,OPTIONS}
       CORS_ALLOWED_HEADERS: ${CORS_ALLOWED_HEADERS:-Authorization,Content-Type,X-Requested-With,X-API-Key,x-api-key}
-      CORS_EXPOSED_HEADERS: ${CORS_EXPOSED_HEADERS:-}
+      CORS_EXPOSED_HEADERS: ${CORS_EXPOSED_HEADERS:-X-CSRF-Token}
       CORS_ALLOW_CREDENTIALS: ${CORS_ALLOW_CREDENTIALS:-true}
       CORS_MAX_AGE: ${CORS_MAX_AGE:-86400}
       AI_SERVICE_URL: ${AI_SERVICE_URL:-http://ai-service:8000}
       CREATIVE_SERVICE_URL: ${CREATIVE_SERVICE_URL:-http://creative-service:8000}
       EMAIL_WORKER_URL: ${EMAIL_WORKER_URL:-http://email-worker:8080}
     ports:
-      - "${APP_PORT:-3010}:3000"
+      - '${APP_PORT:-3010}:3000'
     restart: on-failure
     networks:
       - auth-service-network
       - woragis-network
 
-  prometheus:
+  woragis-auth-prometheus:
     image: prom/prometheus:v2.54.1
-    container_name: auth-service-prometheus
+    container_name: woragis-auth-prometheus
     volumes:
       - ./monitoring/prometheus-config.yml:/etc/prometheus/prometheus.yml:ro
       - ./monitoring/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
       - prometheus-data:/prometheus
     command:
-      - "--config.file=/etc/prometheus/prometheus.yml"
-      - "--storage.tsdb.path=/prometheus"
-      - "--storage.tsdb.retention.time=30d"
-      - "--web.console.libraries=/usr/share/prometheus/console_libraries"
-      - "--web.console.templates=/usr/share/prometheus/consoles"
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
     depends_on:
-      - app
+      - woragis-auth-app
     ports:
-      - "${PROMETHEUS_PORT:-9100}:9090"
+      - '${PROMETHEUS_PORT:-9100}:9090'
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:9090/-/healthy || exit 1"]
+      test:
+        [
+          'CMD-SHELL',
+          'wget --no-verbose --tries=1 --spider http://localhost:9090/-/healthy || exit 1',
+        ]
       interval: 10s
       timeout: 5s
       retries: 5
     networks:
       - auth-service-network
 
-  loki:
+  woragis-auth-loki:
     image: grafana/loki:2.9.2
-    container_name: auth-service-loki
+    container_name: woragis-auth-loki
     ports:
-      - "${LOKI_PORT:-3110}:3100"
+      - '${LOKI_PORT:-3110}:3100'
     volumes:
       - ./monitoring/loki-config.yml:/etc/loki/local-config.yaml:ro
       - loki-data:/loki
-    command: 
+    command:
       - -config.file=/etc/loki/local-config.yaml
       - -target=all
-    entrypoint: ["/bin/sh", "-c", "mkdir -p /loki/rules && /usr/bin/loki -config.file=/etc/loki/local-config.yaml -target=all"]
+    entrypoint:
+      [
+        '/bin/sh',
+        '-c',
+        'mkdir -p /loki/rules && /usr/bin/loki -config.file=/etc/loki/local-config.yaml -target=all',
+      ]
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:3100/ready || exit 1"]
+      test:
+        [
+          'CMD-SHELL',
+          'wget --no-verbose --tries=1 --spider http://localhost:3100/ready || exit 1',
+        ]
       interval: 10s
       timeout: 5s
       retries: 5
     networks:
       - auth-service-network
 
-  promtail:
+  woragis-auth-promtail:
     image: grafana/promtail:2.9.2
-    container_name: auth-service-promtail
+    container_name: woragis-auth-promtail
     volumes:
       - ./monitoring/promtail-config.yml:/etc/promtail/config.yml:ro
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
@@ -146,55 +159,59 @@ services:
       - promtail-positions:/tmp
     command: -config.file=/etc/promtail/config.yml
     depends_on:
-      loki:
+      woragis-auth-loki:
         condition: service_healthy
     restart: unless-stopped
     networks:
       - auth-service-network
 
-  jaeger:
+  woragis-auth-jaeger:
     image: jaegertracing/all-in-one:1.57
-    container_name: auth-service-jaeger
+    container_name: woragis-auth-jaeger
     environment:
-      COLLECTOR_OTLP_ENABLED: "true"
-      COLLECTOR_ZIPKIN_HOST_PORT: ":9411"
+      COLLECTOR_OTLP_ENABLED: 'true'
+      COLLECTOR_ZIPKIN_HOST_PORT: ':9411'
     ports:
-      - "${JAEGER_UI_PORT:-16696}:16686"  # Jaeger UI
-      - "${JAEGER_OTLP_GRPC_PORT:-4327}:4317"    # OTLP gRPC
-      - "${JAEGER_OTLP_HTTP_PORT:-4328}:4318"    # OTLP HTTP
-      - "${JAEGER_AGENT_UDP_6831:-6841}:6831/udp"  # Jaeger agent (UDP)
-      - "${JAEGER_AGENT_UDP_6832:-6842}:6832/udp"  # Jaeger agent (UDP)
-      - "${JAEGER_CONFIG_PORT:-5788}:5778"    # Config server
-      - "${JAEGER_GRPC_PORT:-14260}:14250"  # Jaeger gRPC
-      - "${JAEGER_HTTP_PORT:-14278}:14268"  # Jaeger HTTP
-      - "${ZIPKIN_PORT:-9421}:9411"    # Zipkin
+      - '${JAEGER_UI_PORT:-16696}:16686' # Jaeger UI
+      - '${JAEGER_OTLP_GRPC_PORT:-4327}:4317' # OTLP gRPC
+      - '${JAEGER_OTLP_HTTP_PORT:-4328}:4318' # OTLP HTTP
+      - '${JAEGER_AGENT_UDP_6831:-6841}:6831/udp' # Jaeger agent (UDP)
+      - '${JAEGER_AGENT_UDP_6832:-6842}:6832/udp' # Jaeger agent (UDP)
+      - '${JAEGER_CONFIG_PORT:-5788}:5778' # Config server
+      - '${JAEGER_GRPC_PORT:-14260}:14250' # Jaeger gRPC
+      - '${JAEGER_HTTP_PORT:-14278}:14268' # Jaeger HTTP
+      - '${ZIPKIN_PORT:-9421}:9411' # Zipkin
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:16686/ || exit 1"]
+      test:
+        [
+          'CMD-SHELL',
+          'wget --no-verbose --tries=1 --spider http://localhost:16686/ || exit 1',
+        ]
       interval: 10s
       timeout: 5s
       retries: 5
     networks:
       - auth-service-network
 
-  grafana:
+  woragis-auth-grafana:
     image: grafana/grafana:11.1.0
-    container_name: auth-service-grafana
+    container_name: woragis-auth-grafana
     depends_on:
-      loki:
+      woragis-auth-loki:
         condition: service_healthy
-      prometheus:
+      woragis-auth-prometheus:
         condition: service_healthy
-      jaeger:
+      woragis-auth-jaeger:
         condition: service_healthy
     environment:
       GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
-      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_USERS_ALLOW_SIGN_UP: 'false'
       GF_INSTALL_PLUGINS: grafana-piechart-panel
       GF_SERVER_ROOT_URL: ${GRAFANA_ROOT_URL:-http://localhost:3000}
     ports:
-      - "${GRAFANA_PORT:-3020}:3000"
+      - '${GRAFANA_PORT:-3020}:3000'
     volumes:
       - grafana-data:/var/lib/grafana
       - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
