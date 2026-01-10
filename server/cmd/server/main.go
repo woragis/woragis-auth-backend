@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -16,16 +17,218 @@ import (
 
 	"woragis-auth-service/internal/config"
 	"woragis-auth-service/internal/database"
-	"woragis-auth-service/pkg/health"
 	authPkg "woragis-auth-service/pkg/auth"
+	"woragis-auth-service/pkg/health"
 	applogger "woragis-auth-service/pkg/logger"
 	appmetrics "woragis-auth-service/pkg/metrics"
-	apptracing "woragis-auth-service/pkg/tracing"
 	appsecurity "woragis-auth-service/pkg/security"
 	apptimeout "woragis-auth-service/pkg/timeout"
-	
+	apptracing "woragis-auth-service/pkg/tracing"
+
 	authdomain "woragis-auth-service/internal/domains"
 )
+
+// maskValue returns first 4 characters of a value, rest as asterisks (for logging secrets safely)
+func maskValue(val string) string {
+	if val == "" {
+		return "<not set>"
+	}
+	if len(val) <= 4 {
+		return "****"
+	}
+	return val[:4] + strings.Repeat("*", len(val)-4)
+}
+
+// logEnvironmentVariables logs all relevant environment variables at startup
+func logEnvironmentVariables(logger *slog.Logger, env string) {
+	logger.Info("=== Environment Configuration ===")
+	
+	// Required variables
+	requiredVars := map[string]string{
+		"DATABASE_URL": os.Getenv("DATABASE_URL"),
+		"REDIS_URL":    os.Getenv("REDIS_URL"),
+		"AES_KEY":      os.Getenv("AES_KEY"),
+		"HASH_SALT":    os.Getenv("HASH_SALT"),
+	}
+	
+	// JWT Secret (check both variants)
+	jwtSecret := os.Getenv("AUTH_JWT_SECRET")
+	if jwtSecret == "" {
+		jwtSecret = os.Getenv("JWT_SECRET")
+		requiredVars["JWT_SECRET"] = jwtSecret
+	} else {
+		requiredVars["AUTH_JWT_SECRET"] = jwtSecret
+	}
+	
+	logger.Info("Required Variables:")
+	for key, val := range requiredVars {
+		status := "✓"
+		if val == "" {
+			status = "✗"
+		}
+		logger.Info("  "+status+" "+key, "value", maskValue(val))
+	}
+	
+	// Application variables (with defaults)
+	logger.Info("Application Variables:")
+	appVars := map[string]string{
+		"APP_NAME":       os.Getenv("APP_NAME"),
+		"PORT":           os.Getenv("PORT"),
+		"ENV":            env,
+		"APP_PUBLIC_URL": os.Getenv("APP_PUBLIC_URL"),
+	}
+	for key, val := range appVars {
+		status := "✓"
+		display := val
+		if val == "" {
+			status = "○"
+			display = "<using default>"
+		}
+		logger.Info("  "+status+" "+key, "value", display)
+	}
+	
+	// Database connection pool settings (optional)
+	logger.Info("Database Pool Settings (optional):")
+	dbPoolVars := map[string]string{
+		"DATABASE_MAX_OPEN_CONNS":    os.Getenv("DATABASE_MAX_OPEN_CONNS"),
+		"DATABASE_MAX_IDLE_CONNS":    os.Getenv("DATABASE_MAX_IDLE_CONNS"),
+		"DATABASE_MAX_IDLE_TIME":     os.Getenv("DATABASE_MAX_IDLE_TIME"),
+		"DATABASE_CONN_MAX_LIFETIME": os.Getenv("DATABASE_CONN_MAX_LIFETIME"),
+	}
+	for key, val := range dbPoolVars {
+		status := "○"
+		display := "<using default>"
+		if val != "" {
+			status = "✓"
+			display = val
+		}
+		logger.Info("  "+status+" "+key, "value", display)
+	}
+	
+	// Redis settings (optional)
+	logger.Info("Redis Settings (optional):")
+	redisVars := map[string]string{
+		"REDIS_PASSWORD": os.Getenv("REDIS_PASSWORD"),
+		"REDIS_DB":       os.Getenv("REDIS_DB"),
+	}
+	for key, val := range redisVars {
+		status := "○"
+		display := "<using default>"
+		if val != "" {
+			status = "✓"
+			if key == "REDIS_PASSWORD" {
+				display = maskValue(val)
+			} else {
+				display = val
+			}
+		}
+		logger.Info("  "+status+" "+key, "value", display)
+	}
+	
+	// JWT settings (optional)
+	logger.Info("JWT Settings (optional):")
+	jwtVars := map[string]string{
+		"JWT_EXPIRE_HOURS":         os.Getenv("JWT_EXPIRE_HOURS"),
+		"JWT_REFRESH_EXPIRE_HOURS": os.Getenv("JWT_REFRESH_EXPIRE_HOURS"),
+		"BCRYPT_COST":              os.Getenv("BCRYPT_COST"),
+	}
+	for key, val := range jwtVars {
+		status := "○"
+		display := "<using default>"
+		if val != "" {
+			status = "✓"
+			display = val
+		}
+		logger.Info("  "+status+" "+key, "value", display)
+	}
+	
+	// RabbitMQ settings (optional - not yet used in code)
+	logger.Info("RabbitMQ Settings (optional - not currently used):")
+	rabbitVars := map[string]string{
+		"RABBITMQ_URL":      os.Getenv("RABBITMQ_URL"),
+		"RABBITMQ_HOST":     os.Getenv("RABBITMQ_HOST"),
+		"RABBITMQ_PORT":     os.Getenv("RABBITMQ_PORT"),
+		"RABBITMQ_USER":     os.Getenv("RABBITMQ_USER"),
+		"RABBITMQ_PASSWORD": os.Getenv("RABBITMQ_PASSWORD"),
+		"RABBITMQ_VHOST":    os.Getenv("RABBITMQ_VHOST"),
+	}
+	for key, val := range rabbitVars {
+		status := "○"
+		display := "<not set>"
+		if val != "" {
+			status = "✓"
+			if key == "RABBITMQ_PASSWORD" || key == "RABBITMQ_URL" {
+				display = maskValue(val)
+			} else {
+				display = val
+			}
+		}
+		logger.Info("  "+status+" "+key, "value", display)
+	}
+	
+	// SMTP/Email settings (optional)
+	logger.Info("SMTP/Email Settings (optional):")
+	smtpVars := map[string]string{
+		"SMTP_HOST":     os.Getenv("SMTP_HOST"),
+		"SMTP_PORT":     os.Getenv("SMTP_PORT"),
+		"SMTP_USERNAME": os.Getenv("SMTP_USERNAME"),
+		"SMTP_PASSWORD": os.Getenv("SMTP_PASSWORD"),
+		"EMAIL_FROM":    os.Getenv("EMAIL_FROM"),
+		"SMTP_TLS":      os.Getenv("SMTP_TLS"),
+	}
+	for key, val := range smtpVars {
+		status := "○"
+		display := "<not set>"
+		if val != "" {
+			status = "✓"
+			if key == "SMTP_PASSWORD" {
+				display = maskValue(val)
+			} else {
+				display = val
+			}
+		}
+		logger.Info("  "+status+" "+key, "value", display)
+	}
+	
+	// CORS settings (optional)
+	logger.Info("CORS Settings (optional):")
+	corsVars := map[string]string{
+		"CORS_ENABLED":           os.Getenv("CORS_ENABLED"),
+		"CORS_ALLOWED_ORIGINS":   os.Getenv("CORS_ALLOWED_ORIGINS"),
+		"CORS_ALLOWED_METHODS":   os.Getenv("CORS_ALLOWED_METHODS"),
+		"CORS_ALLOWED_HEADERS":   os.Getenv("CORS_ALLOWED_HEADERS"),
+		"CORS_EXPOSED_HEADERS":   os.Getenv("CORS_EXPOSED_HEADERS"),
+		"CORS_ALLOW_CREDENTIALS": os.Getenv("CORS_ALLOW_CREDENTIALS"),
+		"CORS_MAX_AGE":           os.Getenv("CORS_MAX_AGE"),
+	}
+	for key, val := range corsVars {
+		status := "○"
+		display := "<using default>"
+		if val != "" {
+			status = "✓"
+			display = val
+		}
+		logger.Info("  "+status+" "+key, "value", display)
+	}
+	
+	// Observability settings (optional)
+	logger.Info("Observability Settings (optional):")
+	obsVars := map[string]string{
+		"JAEGER_ENDPOINT": os.Getenv("JAEGER_ENDPOINT"),
+	}
+	for key, val := range obsVars {
+		status := "○"
+		display := "<using default>"
+		if val != "" {
+			status = "✓"
+			display = val
+		}
+		logger.Info("  "+status+" "+key, "value", display)
+	}
+	
+	logger.Info("=== End Configuration ===")
+	logger.Info("")
+}
 
 // validateRequiredEnvVars checks that all required environment variables are set
 func validateRequiredEnvVars(logger *slog.Logger, env string) error {
@@ -75,6 +278,9 @@ func main() {
 
 	// Setup structured logger with trace ID support
 	slogLogger := applogger.New(env)
+
+	// Log all environment variables for visibility
+	logEnvironmentVariables(slogLogger, env)
 
 	// Validate required environment variables before proceeding
 	if err := validateRequiredEnvVars(slogLogger, env); err != nil {
