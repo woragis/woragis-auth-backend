@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -26,6 +27,41 @@ import (
 	authdomain "woragis-auth-service/internal/domains"
 )
 
+// validateRequiredEnvVars checks that all required environment variables are set
+func validateRequiredEnvVars(logger *slog.Logger, env string) error {
+	required := []string{
+		"DATABASE_URL",
+		"REDIS_URL",
+		"AES_KEY",
+		"HASH_SALT",
+	}
+
+	// JWT_SECRET is required in production
+	if env == "production" {
+		jwtSecret := os.Getenv("AUTH_JWT_SECRET")
+		if jwtSecret == "" {
+			jwtSecret = os.Getenv("JWT_SECRET")
+		}
+		if jwtSecret == "" {
+			required = append(required, "AUTH_JWT_SECRET or JWT_SECRET")
+		}
+	}
+
+	var missing []string
+	for _, key := range required {
+		if os.Getenv(key) == "" {
+			missing = append(missing, key)
+		}
+	}
+
+	if len(missing) > 0 {
+		return fmt.Errorf("required environment variables not set: %v", missing)
+	}
+
+	logger.Info("environment variables validated successfully")
+	return nil
+}
+
 func main() {
 	// Load configuration first to get environment
 	cfg := config.Load()
@@ -39,6 +75,12 @@ func main() {
 
 	// Setup structured logger with trace ID support
 	slogLogger := applogger.New(env)
+
+	// Validate required environment variables before proceeding
+	if err := validateRequiredEnvVars(slogLogger, env); err != nil {
+		slogLogger.Error("missing required environment variables", "error", err)
+		os.Exit(1)
+	}
 
 	// Initialize OpenTelemetry tracing
 	tracingShutdown, err := apptracing.Init(apptracing.Config{
