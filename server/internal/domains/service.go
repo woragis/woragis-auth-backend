@@ -1,26 +1,18 @@
 package auth
 
 import (
-	"errors"
 	"fmt"
 	"time"
 
 	"woragis-auth-service/pkg/auth"
 	"woragis-auth-service/pkg/crypto"
+	apperrors "woragis-auth-service/pkg/errors"
 	appmetrics "woragis-auth-service/pkg/metrics"
 
 	"github.com/google/uuid"
 )
 
-var (
-	ErrInvalidPassword     = errors.New("invalid password")
-	ErrUserNotVerified     = errors.New("user email not verified")
-	ErrUserInactive        = errors.New("user account is inactive")
-	ErrSessionExpired      = errors.New("session has expired")
-	ErrTokenExpired        = errors.New("verification token has expired")
-	ErrTokenAlreadyUsed    = errors.New("verification token already used")
-	ErrPasswordTooWeak     = errors.New("password does not meet strength requirements")
-)
+// Removed old error variables - now using structured error codes from pkg/errors
 
 // Service defines the interface for auth service operations
 type Service interface {
@@ -103,22 +95,25 @@ type PasswordChangeRequest struct {
 func (s *serviceImpl) register(req *RegisterRequest) (*AuthResponse, error) {
 	// Check if user already exists
 	existingUser, err := s.repo.getUserByEmail(req.Email)
-	if err != nil && err != ErrUserNotFound {
-		return nil, fmt.Errorf("failed to check existing user: %w", err)
+	if err != nil {
+		// Check if it's a "user not found" error by checking the AppError code
+		if appErr, ok := err.(*apperrors.AppError); !ok || appErr.Code != apperrors.AUTH_USER_NOT_FOUND {
+			return nil, apperrors.Wrap(apperrors.DB_QUERY_FAILED, err)
+		}
 	}
 	if existingUser != nil {
-		return nil, ErrUserAlreadyExists
+		return nil, apperrors.New(apperrors.AUTH_EMAIL_ALREADY_EXISTS)
 	}
 
 	// Validate password strength
 	if err := auth.CheckPasswordStrength(req.Password); err != nil {
-		return nil, ErrPasswordTooWeak
+		return nil, apperrors.New(apperrors.AUTH_WEAK_PASSWORD)
 	}
 
 	// Hash password
 	hashedPassword, err := auth.HashPassword(req.Password, s.bcryptCost)
 	if err != nil {
-		return nil, fmt.Errorf("failed to hash password: %w", err)
+		return nil, apperrors.Wrap(apperrors.CRYPTO_HASH_FAILED, err)
 	}
 
 	// Create user
@@ -137,7 +132,7 @@ func (s *serviceImpl) register(req *RegisterRequest) (*AuthResponse, error) {
 	}
 
 	if err := s.repo.createUser(user); err != nil {
-		return nil, fmt.Errorf("failed to create user: %w", err)
+		return nil, apperrors.Wrap(apperrors.DB_CREATE_FAILED, err)
 	}
 
 	// Record user registration metric
@@ -154,13 +149,13 @@ func (s *serviceImpl) register(req *RegisterRequest) (*AuthResponse, error) {
 	}
 
 	if err := s.repo.createProfile(profile); err != nil {
-		return nil, fmt.Errorf("failed to create profile: %w", err)
+		return nil, apperrors.Wrap(apperrors.DB_CREATE_FAILED, err)
 	}
 
 	// Generate tokens with full name
 	accessToken, refreshToken, err := s.jwtManager.Generate(user.ID, user.Email, user.Role, user.GetFullName())
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate tokens: %w", err)
+		return nil, apperrors.Wrap(apperrors.AUTH_JWT_GENERATION_FAILED, err)
 	}
 
 	// Create session
@@ -175,18 +170,18 @@ func (s *serviceImpl) register(req *RegisterRequest) (*AuthResponse, error) {
 	}
 
 	if err := s.repo.createSession(session); err != nil {
-		return nil, fmt.Errorf("failed to create session: %w", err)
+		return nil, apperrors.Wrap(apperrors.DB_CREATE_FAILED, err)
 	}
 
 	// Update last login
 	if err := s.repo.updateLastLogin(user.ID); err != nil {
-		return nil, fmt.Errorf("failed to update last login: %w", err)
+		return nil, apperrors.Wrap(apperrors.DB_UPDATE_FAILED, err)
 	}
 
 	// Load user with profile
 	user, err = s.repo.getUserByID(user.ID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load user: %w", err)
+		return nil, apperrors.Wrap(apperrors.DB_QUERY_FAILED, err)
 	}
 
 	return &AuthResponse{
@@ -204,7 +199,7 @@ func (s *serviceImpl) login(req *LoginRequest, userAgent, ipAddress string) (*Au
 
 	// Validate that either email or username is provided
 	if req.Email == "" && req.Username == "" {
-		return nil, ErrInvalidCredentials
+		return nil, apperrors.New(apperrors.AUTH_INVALID_CREDENTIALS)
 	}
 
 	// Get user by email or username
@@ -215,27 +210,27 @@ func (s *serviceImpl) login(req *LoginRequest, userAgent, ipAddress string) (*Au
 	}
 
 	if err != nil {
-		if err == ErrUserNotFound {
-			return nil, ErrInvalidCredentials
+		if appErr, ok := err.(*apperrors.AppError); ok && appErr.Code == apperrors.AUTH_USER_NOT_FOUND {
+			return nil, apperrors.New(apperrors.AUTH_INVALID_CREDENTIALS)
 		}
-		return nil, fmt.Errorf("failed to get user: %w", err)
+		return nil, apperrors.Wrap(apperrors.DB_QUERY_FAILED, err)
 	}
 
 	// Check if user is active
 	if !user.IsActive {
-		return nil, ErrUserInactive
+		return nil, apperrors.New(apperrors.AUTH_UNAUTHORIZED).WithDetails("Account is inactive")
 	}
 
 	// Verify password
 	if err := auth.VerifyPassword(req.Password, user.Password); err != nil {
 		appmetrics.RecordUserLogin(false)
-		return nil, ErrInvalidCredentials
+		return nil, apperrors.New(apperrors.AUTH_INVALID_CREDENTIALS)
 	}
 
 	// Generate tokens with full name
 	accessToken, refreshToken, err := s.jwtManager.Generate(user.ID, user.Email, user.Role, user.GetFullName())
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate tokens: %w", err)
+		return nil, apperrors.Wrap(apperrors.AUTH_JWT_GENERATION_FAILED, err)
 	}
 
 	// Create session
@@ -252,12 +247,12 @@ func (s *serviceImpl) login(req *LoginRequest, userAgent, ipAddress string) (*Au
 	}
 
 	if err := s.repo.createSession(session); err != nil {
-		return nil, fmt.Errorf("failed to create session: %w", err)
+		return nil, apperrors.Wrap(apperrors.DB_CREATE_FAILED, err)
 	}
 
 	// Update last login
 	if err := s.repo.updateLastLogin(user.ID); err != nil {
-		return nil, fmt.Errorf("failed to update last login: %w", err)
+		return nil, apperrors.Wrap(apperrors.DB_UPDATE_FAILED, err)
 	}
 
 	// Record successful login
@@ -276,33 +271,33 @@ func (s *serviceImpl) refreshToken(refreshToken string) (*AuthResponse, error) {
 	// Get session by refresh token
 	session, err := s.repo.getSessionByRefreshToken(refreshToken)
 	if err != nil {
-		if err == ErrSessionNotFound {
-			return nil, ErrSessionExpired
+		if appErr, ok := err.(*apperrors.AppError); ok && appErr.Code == apperrors.DB_RECORD_NOT_FOUND {
+			return nil, apperrors.New(apperrors.CSRF_TOKEN_EXPIRED).WithDetails("Session expired")
 		}
 		return nil, fmt.Errorf("failed to get session: %w", err)
 	}
 
 	// Check if session is valid
 	if !session.IsSessionValid() {
-		return nil, ErrSessionExpired
+		return nil, apperrors.New(apperrors.CSRF_TOKEN_EXPIRED).WithDetails("Session expired")
 	}
 
 	// Get user
 	user, err := s.repo.getUserByID(session.UserID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get user: %w", err)
+		return nil, apperrors.Wrap(apperrors.DB_QUERY_FAILED, err)
 	}
 
 	// Check if user is active
 	if !user.IsActive {
-		return nil, ErrUserInactive
+		return nil, apperrors.New(apperrors.AUTH_UNAUTHORIZED).WithDetails("Account is inactive")
 	}
 
 	// Generate new access token
 	newAccessToken, err := s.jwtManager.Refresh(refreshToken)
 	if err != nil {
 		appmetrics.RecordTokenRefresh(false)
-		return nil, fmt.Errorf("failed to refresh token: %w", err)
+		return nil, apperrors.Wrap(apperrors.AUTH_JWT_GENERATION_FAILED, err)
 	}
 
 	// Record successful token refresh
@@ -320,10 +315,10 @@ func (s *serviceImpl) refreshToken(refreshToken string) (*AuthResponse, error) {
 func (s *serviceImpl) logout(refreshToken string) error {
 	session, err := s.repo.getSessionByRefreshToken(refreshToken)
 	if err != nil {
-		if err == ErrSessionNotFound {
+		if appErr, ok := err.(*apperrors.AppError); ok && appErr.Code == apperrors.DB_RECORD_NOT_FOUND {
 			return nil // Already logged out
 		}
-		return fmt.Errorf("failed to get session: %w", err)
+		return apperrors.Wrap(apperrors.DB_QUERY_FAILED, err)
 	}
 
 	// Revoke refresh token (add to blacklist)
@@ -363,7 +358,7 @@ func (s *serviceImpl) getUserProfile(userID uuid.UUID) (*Profile, error) {
 func (s *serviceImpl) updateUserProfile(userID uuid.UUID, req *ProfileUpdateRequest) (*Profile, error) {
 	profile, err := s.repo.getProfileByUserID(userID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get profile: %w", err)
+		return nil, apperrors.Wrap(apperrors.DB_QUERY_FAILED, err)
 	}
 
 	// Update profile fields
@@ -398,7 +393,7 @@ func (s *serviceImpl) updateUserProfile(userID uuid.UUID, req *ProfileUpdateRequ
 	profile.UpdatedAt = time.Now()
 
 	if err := s.repo.updateProfile(profile); err != nil {
-		return nil, fmt.Errorf("failed to update profile: %w", err)
+		return nil, apperrors.Wrap(apperrors.DB_UPDATE_FAILED, err)
 	}
 
 	return profile, nil
@@ -409,23 +404,23 @@ func (s *serviceImpl) changePassword(userID uuid.UUID, req *PasswordChangeReques
 	// Get user
 	user, err := s.repo.getUserByID(userID)
 	if err != nil {
-		return fmt.Errorf("failed to get user: %w", err)
+		return apperrors.Wrap(apperrors.DB_QUERY_FAILED, err)
 	}
 
 	// Verify current password
 	if err := auth.VerifyPassword(req.CurrentPassword, user.Password); err != nil {
-		return ErrInvalidPassword
+		return apperrors.New(apperrors.AUTH_PASSWORD_MISMATCH)
 	}
 
 	// Validate new password strength
 	if err := auth.CheckPasswordStrength(req.NewPassword); err != nil {
-		return ErrPasswordTooWeak
+		return apperrors.New(apperrors.AUTH_WEAK_PASSWORD)
 	}
 
 	// Hash new password
 	hashedPassword, err := auth.HashPassword(req.NewPassword, s.bcryptCost)
 	if err != nil {
-		return fmt.Errorf("failed to hash password: %w", err)
+		return apperrors.Wrap(apperrors.CRYPTO_HASH_FAILED, err)
 	}
 
 	// Update password
@@ -434,7 +429,7 @@ func (s *serviceImpl) changePassword(userID uuid.UUID, req *PasswordChangeReques
 
 	if err := s.repo.updateUser(user); err != nil {
 		appmetrics.RecordPasswordChange(false)
-		return fmt.Errorf("failed to update password: %w", err)
+		return apperrors.Wrap(apperrors.DB_UPDATE_FAILED, err)
 	}
 
 	// Record successful password change
@@ -449,7 +444,7 @@ func (s *serviceImpl) createVerificationToken(userID uuid.UUID, tokenType string
 	// Generate random token
 	token, err := crypto.GenerateRandomString(32)
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate token: %w", err)
+		return nil, apperrors.Wrap(apperrors.CRYPTO_TOKEN_GENERATION_FAILED, err)
 	}
 
 	verificationToken := &VerificationToken{
@@ -464,7 +459,7 @@ func (s *serviceImpl) createVerificationToken(userID uuid.UUID, tokenType string
 	}
 
 	if err := s.repo.createVerificationToken(verificationToken); err != nil {
-		return nil, fmt.Errorf("failed to create verification token: %w", err)
+		return nil, apperrors.Wrap(apperrors.DB_CREATE_FAILED, err)
 	}
 
 	return verificationToken, nil
@@ -474,29 +469,29 @@ func (s *serviceImpl) createVerificationToken(userID uuid.UUID, tokenType string
 func (s *serviceImpl) verifyEmail(token string) error {
 	verificationToken, err := s.repo.getVerificationToken(token)
 	if err != nil {
-		if err == ErrTokenNotFound {
-			return ErrTokenExpired
+		if appErr, ok := err.(*apperrors.AppError); ok && appErr.Code == apperrors.DB_RECORD_NOT_FOUND {
+			return apperrors.New(apperrors.CSRF_TOKEN_EXPIRED)
 		}
-		return fmt.Errorf("failed to get verification token: %w", err)
+		return apperrors.Wrap(apperrors.DB_QUERY_FAILED, err)
 	}
 
 	// Check if token is valid
 	if !verificationToken.IsTokenValid() {
 		if verificationToken.IsUsed {
-			return ErrTokenAlreadyUsed
+			return apperrors.New(apperrors.CSRF_TOKEN_INVALID).WithDetails("Token already used")
 		}
-		return ErrTokenExpired
+		return apperrors.New(apperrors.CSRF_TOKEN_EXPIRED)
 	}
 
 	// Mark token as used
 	if err := s.repo.markTokenAsUsed(verificationToken.ID); err != nil {
-		return fmt.Errorf("failed to mark token as used: %w", err)
+		return apperrors.Wrap(apperrors.DB_UPDATE_FAILED, err)
 	}
 
 	// Verify user email
 	if err := s.repo.verifyUserEmail(verificationToken.UserID); err != nil {
 		appmetrics.RecordEmailVerification(false)
-		return fmt.Errorf("failed to verify user email: %w", err)
+		return apperrors.Wrap(apperrors.DB_UPDATE_FAILED, err)
 	}
 
 	// Record successful email verification
@@ -519,7 +514,7 @@ func (s *serviceImpl) listUsers(page, limit int, search string) ([]User, int64, 
 // cleanupExpiredSessions removes expired sessions and tokens
 func (s *serviceImpl) cleanupExpiredSessions() error {
 	if err := s.repo.deleteExpiredSessions(); err != nil {
-		return fmt.Errorf("failed to delete expired sessions: %w", err)
+		return apperrors.Wrap(apperrors.DB_DELETE_FAILED, err)
 	}
 
 	if err := s.repo.deleteExpiredTokens(); err != nil {
