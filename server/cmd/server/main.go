@@ -371,6 +371,7 @@ func main() {
 	// Secure cookie should be false in development (HTTP) and true in production (HTTPS)
 	secureCookie := env == "production"
 	csrfCfg := appsecurity.DefaultCSRFConfig(dbManager.GetRedis(), secureCookie)
+	csrfCfg.ExemptRoutes = append(csrfCfg.ExemptRoutes, "/api/v1/auth/validate")
 	app.Use(appsecurity.CSRFMiddleware(csrfCfg))
 
 	// Rate limiting (100 requests per minute per IP/user)
