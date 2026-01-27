@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -81,8 +82,8 @@ type ProfileUpdateRequest struct {
 	Phone       string     `json:"phone"`
 	Location    string     `json:"location"`
 	Website     string     `json:"website"`
-	SocialLinks string     `json:"social_links"`
-	Preferences string     `json:"preferences"`
+	SocialLinks map[string]string     `json:"social_links"`
+	Preferences map[string]interface{}     `json:"preferences"`
 }
 
 // PasswordChangeRequest represents password change request
@@ -383,11 +384,15 @@ func (s *serviceImpl) updateUserProfile(userID uuid.UUID, req *ProfileUpdateRequ
 	if req.Website != "" {
 		profile.Website = req.Website
 	}
-	if req.SocialLinks != "" {
-		profile.SocialLinks = req.SocialLinks
+	if req.SocialLinks != nil {
+		if b, err := json.Marshal(req.SocialLinks); err == nil {
+			profile.SocialLinks = string(b)
+		}
 	}
-	if req.Preferences != "" {
-		profile.Preferences = req.Preferences
+	if req.Preferences != nil {
+		if b, err := json.Marshal(req.Preferences); err == nil {
+			profile.Preferences = string(b)
+		}
 	}
 
 	profile.UpdatedAt = time.Now()
