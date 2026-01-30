@@ -1,0 +1,1 @@
+{"success":false,"error":{"code":"AUTH_3007","message":"Failed to create record in database","details":"[AUTH_3002] Database query execution failed: ERROR: duplicate key value violates unique constraint \"idx_users_username\" (SQLSTATE 23505)"}}

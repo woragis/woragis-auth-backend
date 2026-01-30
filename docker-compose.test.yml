@@ -31,24 +31,7 @@ services:
     command: redis-server --appendonly no
     networks:
       - woragis-test-network
-
-  rabbitmq:
-    image: rabbitmq:3.13-management-alpine
-    container_name: auth-service-test-rabbitmq
-    environment:
-      RABBITMQ_DEFAULT_USER: ${TEST_RABBITMQ_USER:-test}
-      RABBITMQ_DEFAULT_PASS: ${TEST_RABBITMQ_PASSWORD:-test}
-      RABBITMQ_DEFAULT_VHOST: ${TEST_RABBITMQ_VHOST:-test}
-    ports:
-      - "${TEST_RABBITMQ_PORT:-5673}:5672"
-      - "${TEST_RABBITMQ_MGMT_PORT:-15673}:15672"
-    healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    networks:
-      - woragis-test-network
+  # RabbitMQ removed from tests for auth service
 
 networks:
   auth-service-test-network:

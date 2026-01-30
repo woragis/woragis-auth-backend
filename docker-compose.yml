@@ -56,12 +56,7 @@ services:
       HASH_SALT: ${HASH_SALT:-}
       DATABASE_URL: postgres://${POSTGRES_USER:-woragis}:${POSTGRES_PASSWORD:-password}@woragis-auth-database:5432/${POSTGRES_DB:-auth_service}?sslmode=disable
       REDIS_URL: redis://woragis-auth-redis:6379/0
-      RABBITMQ_URL: amqp://${RABBITMQ_USER:-woragis}:${RABBITMQ_PASSWORD:-woragis}@rabbitmq:5672/${RABBITMQ_VHOST:-/}
-      RABBITMQ_USER: ${RABBITMQ_USER:-woragis}
-      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-woragis}
-      RABBITMQ_HOST: ${RABBITMQ_HOST:-rabbitmq}
-      RABBITMQ_PORT: ${RABBITMQ_PORT:-5671}
-      RABBITMQ_VHOST: ${RABBITMQ_VHOST:-/}
+      # RabbitMQ removed from auth service environment
       SMTP_HOST: ${SMTP_HOST:-}
       SMTP_PORT: ${SMTP_PORT:-587}
       SMTP_USERNAME: ${SMTP_USERNAME:-}
