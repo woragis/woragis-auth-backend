@@ -4,8 +4,8 @@ import (
 	"errors"
 	"log"
 
-	"woragis-auth-service/pkg/auth"
-	"woragis-auth-service/pkg/utils"
+	authpkg "woragis-auth-service/pkg/auth"
+	apperrors "woragis-auth-service/pkg/errors"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
@@ -13,48 +13,52 @@ import (
 
 // JWTConfig holds the configuration for JWT middleware
 type JWTConfig struct {
-	JWTManager *auth.JWTManager
+	JWTManager *authpkg.JWTManager
 }
 
 // JWTMiddleware creates a Fiber JWT authentication middleware
 func JWTMiddleware(config JWTConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
+		requestID := c.Get("X-Request-ID")
+		
 		// Get token from Authorization header
 		authHeader := c.Get("Authorization")
 		if authHeader == "" {
-			log.Printf("[JWT Auth] Missing authorization header | %s %s | Request-ID: %s", 
-				c.Method(), c.Path(), c.Get("X-Request-ID"))
-			return utils.UnauthorizedResponse(c, "Authorization header required")
+			appErr := HeaderError("Authorization")
+			log.Printf("[JWT Auth] %s | %s %s | Request-ID: %s", 
+				appErr.Code, c.Method(), c.Path(), requestID)
+			return apperrors.SendError(c, appErr)
 		}
 
 		// Extract token from "Bearer <token>"
-		token, err := auth.ExtractTokenFromHeader(authHeader)
+		token, err := authpkg.ExtractTokenFromHeader(authHeader)
 		if err != nil {
-			log.Printf("[JWT Auth] Invalid authorization header format | %s %s | Error: %v | Request-ID: %s", 
-				c.Method(), c.Path(), err, c.Get("X-Request-ID"))
-			return utils.UnauthorizedResponse(c, "Invalid authorization header format")
+			appErr := TokenFormatError(err.Error())
+			log.Printf("[JWT Auth] %s | %s %s | Reason: %v | Request-ID: %s", 
+				appErr.Code, c.Method(), c.Path(), err, requestID)
+			return apperrors.SendError(c, appErr)
 		}
 
 		// Validate token
 		claims, err := config.JWTManager.Validate(token)
 		if err != nil {
-			// Log with detailed error for debugging
+			// Create token preview for logging (first 20 chars)
 			tokenPreview := token
 			if len(token) > 20 {
 				tokenPreview = token[:20] + "..."
 			}
-			log.Printf("[JWT Auth] Token validation failed | %s %s | Error: %v | Token: %s | Request-ID: %s", 
-				c.Method(), c.Path(), err, tokenPreview, c.Get("X-Request-ID"))
 			
-			switch err {
-			case auth.ErrTokenExpired:
-				return utils.UnauthorizedResponse(c, "Token has expired")
-			case auth.ErrTokenInvalid:
-				return utils.UnauthorizedResponse(c, "Invalid token")
-			default:
-				// Unknown error - log it and return generic message
-				return utils.UnauthorizedResponse(c, "Token validation failed")
-			}
+			// Create structured error with code and context
+			appErr := ValidationFailedError(err.Error(), tokenPreview, requestID)
+			log.Printf("[JWT Auth] %s | %s %s | Error: %v | Token: %s | Request-ID: %s", 
+				appErr.Code, c.Method(), c.Path(), err, tokenPreview, requestID)
+			
+			// Enhance context with more info
+			appErr.WithContext("method", c.Method()).
+				WithContext("path", c.Path()).
+				WithContext("error_details", err.Error())
+			
+			return apperrors.SendError(c, appErr)
 		}
 
 		// Add user information to context
@@ -72,12 +76,21 @@ func RequireRole(requiredRole string) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		userRole := c.Locals("userRole")
 		if userRole == nil {
-			return utils.UnauthorizedResponse(c, "User role not found")
+			appErr := apperrors.New(apperrors.AUTH_UNAUTHORIZED).
+				WithContext("component", "role_middleware").
+				WithContext("reason", "user_role_not_found").
+				WithContext("required_role", requiredRole)
+			return apperrors.SendError(c, appErr)
 		}
 
 		role, ok := userRole.(string)
 		if !ok || role != requiredRole {
-			return utils.ForbiddenResponse(c, "Insufficient permissions")
+			appErr := apperrors.New(apperrors.AUTH_UNAUTHORIZED).
+				WithContext("component", "role_middleware").
+				WithContext("reason", "insufficient_permissions").
+				WithContext("required_role", requiredRole).
+				WithContext("user_role", role)
+			return apperrors.SendError(c, appErr)
 		}
 
 		return c.Next()
@@ -94,12 +107,20 @@ func RequireModerator() fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		userRole := c.Locals("userRole")
 		if userRole == nil {
-			return utils.UnauthorizedResponse(c, "User role not found")
+			appErr := apperrors.New(apperrors.AUTH_UNAUTHORIZED).
+				WithContext("component", "moderator_middleware").
+				WithContext("reason", "user_role_not_found")
+			return apperrors.SendError(c, appErr)
 		}
 
 		role, ok := userRole.(string)
 		if !ok || (role != "moderator" && role != "admin") {
-			return utils.ForbiddenResponse(c, "Moderator or admin access required")
+			appErr := apperrors.New(apperrors.AUTH_UNAUTHORIZED).
+				WithContext("component", "moderator_middleware").
+				WithContext("reason", "insufficient_permissions").
+				WithContext("required_roles", []string{"moderator", "admin"}).
+				WithContext("user_role", role)
+			return apperrors.SendError(c, appErr)
 		}
 
 		return c.Next()
@@ -113,7 +134,7 @@ func OptionalJWTMiddleware(config JWTConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		authHeader := c.Get("Authorization")
 		if authHeader != "" {
-			token, err := auth.ExtractTokenFromHeader(authHeader)
+			token, err := authpkg.ExtractTokenFromHeader(authHeader)
 			if err == nil {
 				claims, err := config.JWTManager.Validate(token)
 				if err == nil {
