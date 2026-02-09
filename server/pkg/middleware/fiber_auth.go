@@ -20,11 +20,15 @@ type JWTConfig struct {
 func JWTMiddleware(config JWTConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		requestID := c.Get("X-Request-ID")
+		if requestID == "" {
+			requestID = uuid.New().String()
+		}
 		
 		// Get token from Authorization header
 		authHeader := c.Get("Authorization")
 		if authHeader == "" {
 			appErr := HeaderError("Authorization")
+			appErr.WithContext("request_id", requestID)
 			log.Printf("[JWT Auth] %s | %s %s | Request-ID: %s", 
 				appErr.Code, c.Method(), c.Path(), requestID)
 			return apperrors.SendError(c, appErr)
@@ -34,6 +38,7 @@ func JWTMiddleware(config JWTConfig) fiber.Handler {
 		token, err := authpkg.ExtractTokenFromHeader(authHeader)
 		if err != nil {
 			appErr := TokenFormatError(err.Error())
+			appErr.WithContext("request_id", requestID)
 			log.Printf("[JWT Auth] %s | %s %s | Reason: %v | Request-ID: %s", 
 				appErr.Code, c.Method(), c.Path(), err, requestID)
 			return apperrors.SendError(c, appErr)
@@ -42,10 +47,12 @@ func JWTMiddleware(config JWTConfig) fiber.Handler {
 		// Validate token
 		claims, err := config.JWTManager.Validate(token)
 		if err != nil {
-			// Create token preview for logging (first 20 chars)
-			tokenPreview := token
+			// Create token preview for logging (first 20 chars + ... or just first 20 if shorter)
+			tokenPreview := ""
 			if len(token) > 20 {
 				tokenPreview = token[:20] + "..."
+			} else if len(token) > 0 {
+				tokenPreview = token
 			}
 			
 			// Create structured error with code and context
