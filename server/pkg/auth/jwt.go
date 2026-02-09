@@ -121,14 +121,15 @@ func (j *JWTManager) Validate(tokenString string) (*Claims, error) {
 		}
 		return nil, ErrTokenInvalid
 	}
-	
-	if !token.Valid {
-		return nil, ErrTokenInvalid
-	}
 
 	claims, ok := token.Claims.(*Claims)
 	if !ok {
 		return nil, ErrTokenInvalid
+	}
+
+	// Validate expiry manually
+	if claims.ExpiresAt != nil && claims.ExpiresAt.Before(time.Now()) {
+		return nil, ErrTokenExpired
 	}
 
 	return claims, nil
